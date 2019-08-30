@@ -232,6 +232,24 @@ func newVersionMiddleware(validVersions []string) RequestMiddleware {
 	}
 }
 
+// newTracingMiddleware Starts a New Relic transaction for each request.
+func newTracingMiddleware() RequestMiddleware {
+	tracingApp, tracingAppErr := setUpAPM()
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if tracingAppErr != nil {
+				log.Printf("Could not set up New Relic app: %v", tracingAppErr)
+			} else {
+				w := tracingApp.StartTransaction(r.URL.Path, w, r)
+				defer w.End()
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // muxAPI is an implementation of the API interface which relies on the gorilla/mux
 // package to handle request dispatching (see http://www.gorillatoolkit.org/pkg/mux).
 type muxAPI struct {
@@ -304,6 +322,9 @@ func (r *muxAPI) RegisterResourceHandler(h ResourceHandler, middleware ...Reques
 	middleware = append(middleware, newAuthMiddleware(h.Authenticate))
 	if validVersions := h.ValidVersions(); validVersions != nil {
 		middleware = append(middleware, newVersionMiddleware(validVersions))
+	}
+	if newRelicKey := os.Getenv("NEW_RELIC_LICENSE_KEY"); newRelicKey != "" {
+		middleware = append(middleware, newTracingMiddleware())
 	}
 
 	// Some browsers don't support PUT and DELETE, so allow method overriding.
